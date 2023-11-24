@@ -380,3 +380,8 @@ options:
     description: |
       Availability zone to use with Cinder CSI. This is passed through to the
       parameters.availability field of the cdk-cinder StorageClass.
+  api-listen-port:
+    type: int
+    default:
+    description: |
+      The port that kubeapi-server will listen on. Defaults to the standard 6443 if unset.

@@ -33,6 +33,11 @@ CEPH_KEYRING = CEPH_CONF_DIR / "ceph.client.{}.keyring".format(
 db = unitdata.kv()
 
 
+def get_api_listen_port():
+    listen_port = hookenv.config("api-listen-port")
+    return listen_port if listen_port else STANDARD_API_PORT
+
+
 def get_endpoints_from_config():
     """
     Return a list of any manually configured API endpoints.
@@ -60,7 +65,7 @@ def get_local_api_endpoint():
 
     Returns a list with a single tuple to match the other functions below.
     """
-    return [("127.0.0.1", STANDARD_API_PORT)]
+    return [("127.0.0.1", get_api_listen_port())]
 
 
 def get_internal_api_endpoints(relation=None):
@@ -110,7 +115,7 @@ def get_internal_api_endpoints(relation=None):
     ingress_address = hookenv.ingress_address(
         relation.relation_id, hookenv.local_unit()
     )
-    return [(ingress_address, STANDARD_API_PORT)]
+    return [(ingress_address, get_api_listen_port())]
 
 
 def get_external_api_endpoints():
@@ -150,7 +155,7 @@ def get_external_api_endpoints():
         return [(host.get("public-address"), host.get("port")) for host in lb_addresses]
 
     # No LBs of any kind, so fall back to public-address.
-    return [(hookenv.unit_public_ip(), STANDARD_API_PORT)]
+    return [(hookenv.unit_public_ip(), get_api_listen_port())]
 
 
 def get_api_urls(endpoints):

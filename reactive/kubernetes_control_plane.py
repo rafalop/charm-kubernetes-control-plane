@@ -1236,13 +1236,19 @@ def start_control_plane():
         kubernetes_common.enable_ipv6_forwarding()
 
     local_address = get_ingress_address("kube-api-endpoint")
-    local_server = "https://{0}:{1}".format(local_address, 6443)
+    local_server = "https://{0}:{1}".format(
+        local_address, kubernetes_control_plane.get_api_listen_port()
+    )
 
     configure_kube_proxy(configure_prefix, [local_server], cluster_cidr)
     service_restart("snap.kube-proxy.daemon")
 
     set_state("kubernetes-control-plane.components.started")
-    hookenv.open_port(6443)
+    # Close any previously opened listening port
+    if hookenv.opened_ports():
+        for port in hookenv.opened_ports():
+            hookenv.close_port(port.split("/")[0], port.split("/")[1])
+    hookenv.open_port(kubernetes_control_plane.get_api_listen_port())
 
 
 @when("config.changed.proxy-extra-args")
@@ -1425,12 +1431,12 @@ def push_service_data():
     if endpoints:
         addresses = [e[0] for e in endpoints]
         kube_api.configure(
-            kubernetes_control_plane.STANDARD_API_PORT, addresses, addresses
+            kubernetes_control_plane.get_api_listen_port(), addresses, addresses
         )
     else:
         # no manually configured LBs, so rely on the interface layer
         # to use the ingress address for each relation
-        kube_api.configure(kubernetes_control_plane.STANDARD_API_PORT)
+        kube_api.configure(kubernetes_control_plane.get_api_listen_port())
 
 
 @when("leadership.is_leader")
@@ -1447,11 +1453,19 @@ def request_load_balancers():
         req = lb_provider.get_request("api-server-" + lb_type)
         req.protocol = req.protocols.tcp
         ext_api_port = kubernetes_control_plane.EXTERNAL_API_PORT
-        int_api_port = kubernetes_control_plane.STANDARD_API_PORT
-        api_port = ext_api_port if lb_type == "external" else int_api_port
+        int_api_lb_port = kubernetes_control_plane.STANDARD_API_PORT
+        int_api_port = kubernetes_control_plane.get_api_listen_port()
+        api_port = ext_api_port if lb_type == "external" else int_api_lb_port
         req.port_mapping = {api_port: int_api_port}
         req.public = lb_type == "external"
         if not req.health_checks:
+            req.add_health_check(
+                protocol=req.protocols.http,
+                port=int_api_port,
+                path="/livez",
+            )
+        else:
+            req.health_checks = []
             req.add_health_check(
                 protocol=req.protocols.http,
                 port=int_api_port,
@@ -1994,6 +2008,13 @@ def on_config_allow_privileged_change():
     remove_state("config.changed.allow-privileged")
 
 
+@when("config.changed.api-listen-port")
+def on_config_api_listen_port_change():
+    """React to changed 'api-listen-port' config value."""
+    clear_flag("kubernetes-control-plane.apiserver.configured")
+    clear_flag("kubernetes-control-plane.components.started")
+
+
 @when_any(
     "config.changed.api-extra-args",
     "config.changed.audit-policy",
@@ -2281,6 +2302,7 @@ def configure_apiserver():
 
     # Handle static options for now
     api_opts["service-cluster-ip-range"] = service_cidr
+    api_opts["secure-port"] = kubernetes_control_plane.get_api_listen_port()
     feature_gates = []
     api_opts["min-request-timeout"] = "300"
     api_opts["v"] = "4"
